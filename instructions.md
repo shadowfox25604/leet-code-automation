@@ -105,6 +105,10 @@ GEMINI_API_KEY=your_gemini_api_key_here
 # If using --no-submit, you can leave these blank
 LEETCODE_SESSION=your_leetcode_session_cookie_here
 LEETCODE_CSRF_TOKEN=your_csrf_token_here
+
+# Batch Solving Limits (optional)
+BATCH_LIMIT=5               # Set your default number of problems to solve
+DELAY_BETWEEN_PROBLEMS=3    # Seconds to wait between questions
 ```
 
 #### How to get LeetCode Cookies (For auto-submission):
@@ -154,6 +158,46 @@ If a solution fails on LeetCode's test cases, the agent sends the error back to 
 ```bash
 python solve.py median-of-two-sorted-arrays --retries 5
 ```
+
+### 6. Batch Solving Mode (Manually Set Your Limit)
+You can set how many problems to solve in multiple ways:
+
+- **Via `--limit` or `-l` flag:**
+  ```bash
+  # Solve exactly 3 problems and stop
+  python solve.py -l 3
+
+  # Solve 10 Easy problems without submitting (saves locally)
+  python solve.py --limit 10 --difficulty easy --no-submit
+
+  # Solve 5 Medium problems with 5-second delay between problems
+  python solve.py --limit 5 --difficulty medium --delay 5
+  ```
+
+- **Via `--batch` or `-b` flag:**
+  ```bash
+  # Uses default limit from .env (BATCH_LIMIT=5)
+  python solve.py --batch
+
+  # Or specify any custom number
+  python solve.py --batch 8
+  ```
+
+- **Interactive Mode (Just run without arguments):**
+  ```bash
+  python solve.py
+  ```
+  The agent will prompt you in the terminal to enter your desired problem count!
+
+### 7. Continuous Autonomous Mode
+Keeps solving problems one after another automatically until you stop it:
+```bash
+python solve.py --continuous
+
+# Continuous mode saving all Easy problems locally
+python solve.py --continuous --difficulty easy --no-submit
+```
+*(Press `Ctrl + C` anytime to gracefully stop and view the summary).*
 
 ---
 

@@ -46,10 +46,13 @@ leetcode/
   - `GEMINI_MODEL = "gemini-3-flash-preview"`
   - `MAX_RETRIES = 3`
   - `SOLUTIONS_DIR = "solutions"`
+  - `DEFAULT_BATCH_LIMIT = 5` (configurable via `BATCH_LIMIT` in `.env`)
+  - `DEFAULT_DELAY = 3` (configurable via `DELAY_BETWEEN_PROBLEMS` in `.env`)
 
 ### `leetcode_client.py`
 - **`fetch_problem(slug)`**: Queries LeetCode GraphQL for `question(titleSlug: ...)`. Returns `title`, `difficulty`, `content` (HTML stripped), `python_template`, `exampleTestcases`, `topicTags`, `questionFrontendId`.
 - **`fetch_daily_challenge()`**: Queries LeetCode GraphQL for `activeDailyCodingChallengeQuestion` and retrieves today's challenge.
+- **`fetch_problem_list(limit, skip, difficulty)`**: Queries LeetCode GraphQL `problemsetQuestionList` to paginate through free problems, optionally filtered by `difficulty` (`EASY`, `MEDIUM`, `HARD`), automatically excluding paid-only problems.
 - **`submit_solution(slug, question_id, code)`**: Sends a POST request to `https://leetcode.com/problems/{slug}/submit/` with authenticated headers. Returns a submission ID.
 - **`check_submission(submission_id)`**: Polls `https://leetcode.com/submissions/detail/{submission_id}/check/` every 2 seconds until status changes from `PENDING` / `STARTED` to final status (`SUCCESS`, `Wrong Answer`, etc.).
 - **Crucial Request Headers**: LeetCode's API requires `User-Agent`, `Origin`, and `Referer` simulating a modern browser; otherwise, it responds with `400 Bad Request` or `403 Forbidden`.
@@ -63,7 +66,7 @@ leetcode/
 
 ### `solve.py`
 - Command-line interface built with `argparse`.
-- Handles URL slug parsing (`extract_slug`), file saving (`save_solution`), and the primary execution loop:
+- **Single Problem Execution (`run_agent`)**:
   1. Fetch problem metadata.
   2. Call `generate_solution()`.
   3. Save to `solutions/<slug>.py`.
@@ -72,6 +75,14 @@ leetcode/
   6. Submit to LeetCode and poll verdict.
   7. If verdict is `Accepted`, report runtime and memory percentiles.
   8. If failed and retries remain, invoke `generate_solution_with_feedback()` and repeat.
+- **Batch / Continuous Execution (`run_batch`)**:
+  1. Paginates through LeetCode's problemset using `fetch_problem_list()`.
+  2. Automatically skips already solved problems (checks if `solutions/<slug>.py` exists).
+  3. Solves each problem sequentially with a configurable rate-limiting `--delay` (default: `DEFAULT_DELAY` from config).
+  4. Manual limits can be specified via `--limit N` / `-l N`, `--batch N` / `-b N`, or configured persistently via `BATCH_LIMIT` in `.env`.
+  5. Interactive terminal prompt automatically asks for the desired limit if `solve.py` is run with no arguments.
+  6. Supports `--continuous` (runs until Ctrl+C).
+  7. Catches `KeyboardInterrupt` gracefully and prints a run summary.
 
 ---
 
@@ -120,6 +131,18 @@ leetcode/
 
 # Custom retry limit
 .\venv\Scripts\python solve.py two-sum --retries 5
+
+# Batch solve using limit flag (e.g. 3 problems)
+.\venv\Scripts\python solve.py --limit 3 --no-submit
+
+# Batch solve using short flag (-l 5)
+.\venv\Scripts\python solve.py -l 5 --difficulty easy --no-submit
+
+# Batch solve using .env default limit (BATCH_LIMIT)
+.\venv\Scripts\python solve.py --batch --no-submit
+
+# Continuous mode (keeps solving until stopped with Ctrl+C)
+.\venv\Scripts\python solve.py --continuous --no-submit
 ```
 
 ---

@@ -5,17 +5,25 @@ Usage:
     python solve.py two-sum                           # Solve by slug
     python solve.py https://leetcode.com/problems/two-sum/  # Solve by URL
     python solve.py --daily                           # Solve today's daily challenge
-    python solve.py two-sum --no-submit               # Generate & save only
     python solve.py two-sum --retries 5               # More retry attempts
+    python solve.py --batch 5                         # Solve 5 problems in a row
+    python solve.py --continuous                      # Solve continuously until stopped
+    python solve.py --batch 10 --difficulty easy      # Solve 10 Easy problems
 """
 
 import argparse
 import os
 import re
 import sys
+import time
 
 import config
-from leetcode_client import fetch_problem, fetch_daily_challenge, submit_solution
+from leetcode_client import (
+    fetch_problem,
+    fetch_daily_challenge,
+    fetch_problem_list,
+    submit_solution,
+)
 from gemini_solver import generate_solution, generate_solution_with_feedback
 
 
@@ -102,7 +110,7 @@ def run_agent(slug=None, daily=False, no_submit=False, retries=None):
         print()
         print("[DONE] Solution saved (submission skipped).")
         print(f"   Review it at: {filepath}")
-        return
+        return True
 
     for attempt in range(1, max_retries + 1):
         print()
@@ -119,10 +127,10 @@ def run_agent(slug=None, daily=False, no_submit=False, retries=None):
             print(f"[WARN] Submission error: {e}")
             if "Missing LEETCODE_SESSION" in str(e):
                 print("   Run with --no-submit to just save the solution locally.")
-            return
+            return False
         except Exception as e:
             print(f"[WARN] Unexpected error: {e}")
-            return
+            return False
 
         status = result.get("status", "Unknown")
 
@@ -132,7 +140,7 @@ def run_agent(slug=None, daily=False, no_submit=False, retries=None):
             print("[ACCEPTED] Accepted!")
             print(f"   Runtime: {result.get('runtime', 'N/A')}{runtime_pct}")
             print(f"   Memory:  {result.get('memory', 'N/A')}{memory_pct}")
-            return
+            return True
 
         # -- Failed -- show error details --
         print(f"[FAILED] {status} (attempt {attempt}/{max_retries})")
@@ -161,6 +169,96 @@ def run_agent(slug=None, daily=False, no_submit=False, retries=None):
             print(f"[EXHAUSTED] All {max_retries} attempts failed.")
             print(f"   Last solution saved at: {filepath}")
             print("   You may want to review and fix it manually.")
+            return False
+
+    return False
+
+
+def run_batch(count=None, difficulty=None, no_submit=False, retries=None, delay=3, skip_solved=True):
+    """
+    Solve problems in batch or continuous mode.
+
+    Args:
+        count: Max number of problems to solve (None = continuous).
+        difficulty: Optional difficulty filter ("easy", "medium", "hard").
+        no_submit: If True, generate & save locally without submitting.
+        retries: Max retry attempts per problem.
+        delay: Delay in seconds between problems.
+        skip_solved: If True, skip problems already in solutions/.
+    """
+    mode_str = f"Continuous mode (press Ctrl+C to stop)" if count is None else f"Batch mode ({count} problems)"
+    diff_str = f" [Difficulty: {difficulty.upper()}]" if difficulty else ""
+    print(f"\n[START] {mode_str}{diff_str}")
+    print(f"[CONFIG] Delay: {delay}s | Skip already solved: {skip_solved}")
+    print("=" * 60)
+
+    solved_count = 0
+    failed_count = 0
+    skipped_count = 0
+    skip_offset = 0
+    page_size = 50
+
+    try:
+        while True:
+            if count is not None and solved_count >= count:
+                break
+
+            questions = fetch_problem_list(
+                limit=page_size,
+                skip=skip_offset,
+                difficulty=difficulty,
+            )
+
+            if not questions:
+                print("\n[INFO] No more problems found in problemset.")
+                break
+
+            skip_offset += len(questions)
+
+            for q in questions:
+                if count is not None and solved_count >= count:
+                    break
+
+                slug = q["titleSlug"]
+                solution_path = os.path.join(config.SOLUTIONS_DIR, f"{slug}.py")
+
+                if skip_solved and os.path.exists(solution_path):
+                    skipped_count += 1
+                    continue
+
+                target_label = f"{solved_count + 1}/{count}" if count else f"{solved_count + 1}"
+                print(f"\n{'=' * 60}")
+                print(f"[QUEUE] Problem #{target_label}: {q['title']} ({q['difficulty']})")
+                print(f"{'=' * 60}")
+
+                try:
+                    success = run_agent(
+                        slug=slug,
+                        no_submit=no_submit,
+                        retries=retries,
+                    )
+                    if success:
+                        solved_count += 1
+                    else:
+                        failed_count += 1
+                except Exception as e:
+                    print(f"[ERROR] Failed to process {slug}: {e}")
+                    failed_count += 1
+
+                # Delay before next problem to respect rate limits
+                if (count is None or solved_count < count) and delay > 0:
+                    print(f"\n[WAIT] Waiting {delay}s before next problem...")
+                    time.sleep(delay)
+
+    except KeyboardInterrupt:
+        print("\n\n[STOPPED] Execution interrupted by user (Ctrl+C).")
+
+    print("\n" + "=" * 60)
+    print("[SUMMARY] Batch Run Completed:")
+    print(f"   Problems solved:  {solved_count}")
+    print(f"   Problems failed:  {failed_count}")
+    print(f"   Problems skipped: {skipped_count} (already had solutions)")
+    print("=" * 60)
 
 
 def main():
@@ -173,7 +271,9 @@ Examples:
   python solve.py https://leetcode.com/problems/two-sum/
   python solve.py --daily
   python solve.py two-sum --no-submit
-  python solve.py two-sum --retries 5
+  python solve.py --batch 5 --no-submit
+  python solve.py --batch 10 --difficulty easy
+  python solve.py --continuous --no-submit
         """,
     )
 
@@ -189,6 +289,46 @@ Examples:
         help="Solve today's daily coding challenge",
     )
     parser.add_argument(
+        "--limit",
+        "-l",
+        type=int,
+        default=None,
+        metavar="N",
+        help=f"Number of problems to solve (default from .env/config: {config.DEFAULT_BATCH_LIMIT})",
+    )
+    parser.add_argument(
+        "--batch",
+        "-b",
+        type=int,
+        nargs="?",
+        const=config.DEFAULT_BATCH_LIMIT,
+        default=None,
+        metavar="N",
+        help=f"Solve N problems sequentially (defaults to {config.DEFAULT_BATCH_LIMIT} if N is omitted)",
+    )
+    parser.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Run continuously, solving problems one after another until stopped (Ctrl+C)",
+    )
+    parser.add_argument(
+        "--difficulty",
+        choices=["easy", "medium", "hard", "EASY", "MEDIUM", "HARD"],
+        default=None,
+        help="Filter batch/continuous problems by difficulty (easy, medium, hard)",
+    )
+    parser.add_argument(
+        "--delay",
+        type=int,
+        default=config.DEFAULT_DELAY,
+        help=f"Delay in seconds between problems in batch mode (default: {config.DEFAULT_DELAY})",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-solve problems even if they already exist in solutions/",
+    )
+    parser.add_argument(
         "--no-submit",
         action="store_true",
         help="Generate and save the solution without submitting to LeetCode",
@@ -202,17 +342,59 @@ Examples:
 
     args = parser.parse_args()
 
-    if not args.problem and not args.daily:
-        parser.print_help()
-        print("\n[ERROR] Please provide a problem slug or use --daily")
-        sys.exit(1)
+    # Determine batch limit
+    batch_count = None
+    if args.limit is not None:
+        batch_count = args.limit
+    elif args.batch is not None:
+        batch_count = args.batch
 
-    run_agent(
-        slug=args.problem,
-        daily=args.daily,
-        no_submit=args.no_submit,
-        retries=args.retries,
-    )
+    is_batch_or_continuous = (batch_count is not None) or args.continuous
+
+    # Interactive fallback if run without arguments in a terminal
+    if not args.problem and not args.daily and not is_batch_or_continuous:
+        if sys.stdin.isatty():
+            print("\n=== LeetCode Autonomous Solver ===")
+            print("No problem specified. Choose what to do:")
+            print("  1. Solve a specific problem (enter slug or URL)")
+            print("  2. Solve today's Daily Challenge (--daily)")
+            print(f"  3. Batch solve problems (default limit: {config.DEFAULT_BATCH_LIMIT})")
+            print("  4. Continuous mode (solve until stopped)")
+            choice = input("\nEnter choice [1/2/3/4] (default: 3): ").strip()
+
+            if choice == "1":
+                args.problem = input("Enter problem slug or URL: ").strip()
+            elif choice == "2":
+                args.daily = True
+            elif choice == "4":
+                args.continuous = True
+                is_batch_or_continuous = True
+            else:
+                raw_lim = input(f"How many problems would you like to solve? [default: {config.DEFAULT_BATCH_LIMIT}]: ").strip()
+                batch_count = int(raw_lim) if raw_lim.isdigit() else config.DEFAULT_BATCH_LIMIT
+                is_batch_or_continuous = True
+        else:
+            parser.print_help()
+            print(f"\n[ERROR] Please specify a problem slug, --daily, --limit <N>, or --continuous")
+            sys.exit(1)
+
+    if is_batch_or_continuous:
+        count = None if args.continuous else batch_count
+        run_batch(
+            count=count,
+            difficulty=args.difficulty,
+            no_submit=args.no_submit,
+            retries=args.retries,
+            delay=args.delay,
+            skip_solved=not args.force,
+        )
+    else:
+        run_agent(
+            slug=args.problem,
+            daily=args.daily,
+            no_submit=args.no_submit,
+            retries=args.retries,
+        )
 
 
 if __name__ == "__main__":

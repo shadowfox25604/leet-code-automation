@@ -215,6 +215,73 @@ def fetch_daily_challenge():
     return fetch_problem(slug)
 
 
+def fetch_problem_list(limit=50, skip=0, difficulty=None):
+    """
+    Fetch a list of problems from the LeetCode problemset.
+    Filters out paid-only problems.
+
+    Args:
+        limit: Max number of questions to fetch.
+        skip: Offset for pagination.
+        difficulty: Optional filter - "EASY", "MEDIUM", or "HARD".
+
+    Returns:
+        List of dicts with: questionFrontendId, title, titleSlug, difficulty.
+    """
+    query = """
+    query problemsetQuestionList($categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput) {
+      problemsetQuestionList: questionList(
+        categorySlug: $categorySlug
+        limit: $limit
+        skip: $skip
+        filters: $filters
+      ) {
+        questions: data {
+          questionFrontendId
+          title
+          titleSlug
+          difficulty
+          paidOnly: isPaidOnly
+        }
+      }
+    }
+    """
+    filters = {}
+    if difficulty:
+        filters["difficulty"] = difficulty.upper()
+
+    payload = {
+        "query": query,
+        "variables": {
+            "categorySlug": "",
+            "skip": skip,
+            "limit": limit,
+            "filters": filters,
+        },
+    }
+
+    resp = requests.post(
+        config.LEETCODE_GRAPHQL_URL,
+        json=payload,
+        headers=_get_public_headers(),
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    if "errors" in data:
+        raise RuntimeError(f"GraphQL error: {data['errors']}")
+
+    questions = (
+        data.get("data", {})
+        .get("problemsetQuestionList", {})
+        .get("questions", [])
+    )
+    # Filter out paid-only problems
+    return [q for q in questions if not q.get("paidOnly")]
+
+
+
 # ─── Submit a solution ─────────────────────────────────────────────────
 
 def submit_solution(slug, question_id, code):

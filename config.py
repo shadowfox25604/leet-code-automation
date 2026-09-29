@@ -20,3 +20,7 @@ GEMINI_MODEL = "gemini-3-flash-preview"
 # --- Agent Settings ---
 MAX_RETRIES = 3
 SOLUTIONS_DIR = "solutions"
+
+# --- Batch & Automation Settings ---
+DEFAULT_BATCH_LIMIT = int(os.getenv("BATCH_LIMIT", "5"))
+DEFAULT_DELAY = int(os.getenv("DELAY_BETWEEN_PROBLEMS", "3"))
